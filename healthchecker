@@ -1,0 +1,67 @@
+#!/usr/bin/ruby
+require 'net/http'
+require 'net/smtp' 
+require 'uri'
+require 'yaml'
+
+#set up logger
+require 'logger'
+logger = Logger.new('/home/cdkf92/scripts/logs/ping.log', 'daily')
+
+url="http://home.chris3000.com"
+ping_ok=true
+email_ok=false
+error=""
+res_body=""
+res_code="500"
+
+#email_credentials
+begin
+yml = YAML.load_file("/home/cdkf92/scripts/email.yml")
+smtp_server=yml['smtp_server']
+smtp_port=yml['smtp_port']
+from_domain=yml['from_domain']
+smtp_account=yml['smtp_account']
+smtp_password=yml['smtp_password']
+email_from=yml['email_from']
+email_to=yml['email_to']
+email_ok=true
+rescue Exception => e
+	ping_ok=false
+	error="error loading yaml file"
+end
+#ping remote server
+begin
+	url = URI.parse(url)
+	res = Net::HTTP.start(url.host, url.port) {|http|
+		http.get('/ping.html')
+	}
+	res_body=res.body
+	res_code=res.code
+rescue Exception => e
+	ping_ok=false
+	error="Something went wrong!\n"+e.to_s
+end
+
+if res_code != "200" && ping_ok
+	ping_ok=false
+	error="ping didn't return 200\nHTTP Status=#{res_code}\nHTTP Body=#{res_body}"
+end
+#deal with bad ping
+if !ping_ok
+	logger.error(error)
+	if email_ok
+		the_email = "From: #{email_from}\nSubject: Ping Fail\n\n#{error}.\n\n"  
+		# handling exceptions  
+		begin  
+			Net::SMTP.start(smtp_server, smtp_port,from_domain,smtp_account,smtp_password, :plain) do |smtpclient|  
+    		smtpclient.send_message(the_email, email_from, email_to)  
+    	end  
+		rescue Exception => e  
+  			logger.error("Exception occured: " + e)
+		end
+	end
+	#do some check of last error
+else
+	logger.warn("ping ok")
+end
