@@ -1,67 +1,29 @@
 #!/usr/bin/ruby
-require 'net/http'
-require 'net/smtp' 
-require 'uri'
+
+require 'net/ping'
 require 'yaml'
-
-#set up logger
 require 'logger'
-logger = Logger.new('/home/cdkf92/scripts/logs/ping.log', 'daily')
+require 'net/smtp' 
 
-url="http://home.chris3000.com"
-ping_ok=true
-email_ok=false
-error=""
-res_body=""
-res_code="500"
+$logger     = Logger.new('healthcheck.log', 'daily')
+$credentials = YAML.load_file("email.yml")
+sites       = ['dev.dothinktool.com', 'app.dothinktool.com', 'www.thisonenotexists.com']
 
-#email_credentials
-begin
-yml = YAML.load_file("/home/cdkf92/scripts/email.yml")
-smtp_server=yml['smtp_server']
-smtp_port=yml['smtp_port']
-from_domain=yml['from_domain']
-smtp_account=yml['smtp_account']
-smtp_password=yml['smtp_password']
-email_from=yml['email_from']
-email_to=yml['email_to']
-email_ok=true
-rescue Exception => e
-	ping_ok=false
-	error="error loading yaml file"
-end
-#ping remote server
-begin
-	url = URI.parse(url)
-	res = Net::HTTP.start(url.host, url.port) {|http|
-		http.get('/ping.html')
-	}
-	res_body=res.body
-	res_code=res.code
-rescue Exception => e
-	ping_ok=false
-	error="Something went wrong!\n"+e.to_s
-end
-
-if res_code != "200" && ping_ok
-	ping_ok=false
-	error="ping didn't return 200\nHTTP Status=#{res_code}\nHTTP Body=#{res_body}"
-end
-#deal with bad ping
-if !ping_ok
-	logger.error(error)
-	if email_ok
-		the_email = "From: #{email_from}\nSubject: Ping Fail\n\n#{error}.\n\n"  
-		# handling exceptions  
-		begin  
-			Net::SMTP.start(smtp_server, smtp_port,from_domain,smtp_account,smtp_password, :plain) do |smtpclient|  
-    		smtpclient.send_message(the_email, email_from, email_to)  
-    	end  
-		rescue Exception => e  
-  			logger.error("Exception occured: " + e)
-		end
+def ping(url)
+	puts "healthchecking => #{url}"
+	p1 = Net::Ping::TCP.new(url, 'https')
+	if p1.ping?
+		$logger.info("#{url} => OK")
+	else
+		error = "#{url} => #{p1.exception.to_s}"
+		msg   = "From: healthchecker@test\nSubject: #{url} esta caido\n\n La aplicacion #{url} no paso el healthcheck y es probable que se encuentre caida.\n #{error}.\n\n"
+		smtp  = Net::SMTP.new 'smtp.gmail.com', 587
+	    smtp.enable_starttls
+	    smtp.start('gmail.com', $credentials['email'], $credentials['password'], :login) do
+	      smtp.send_message(msg, 'healthchecker@test', $credentials['send_to'])
+	    end
+	    $logger.error(error)
 	end
-	#do some check of last error
-else
-	logger.warn("ping ok")
 end
+
+sites.each { |site| ping(site) }
